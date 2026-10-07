@@ -208,9 +208,15 @@ function pickVoice(){ if(!('speechSynthesis' in window)) return null;
   const vs=speechSynthesis.getVoices().filter(v=>/^(zh|cmn)/i.test(v.lang));
   zhVoice=vs.find(v=>/zh[-_]CN|cmn-Hans/i.test(v.lang))||vs[0]||null; voiceB=vs.find(v=>v!==zhVoice&&/zh[-_]CN|cmn-Hans/i.test(v.lang))||null; return zhVoice }
 if('speechSynthesis' in window){ pickVoice(); speechSynthesis.onvoiceschanged=pickVoice }
-const canSpeak=()=>('speechSynthesis' in window)&&(pickVoice()!==null);
-function say(text,o={}){ return new Promise(res=>{ const u=new SpeechSynthesisUtterance(text); u.lang='zh-CN'; u.rate=o.rate||.8; u.pitch=o.pitch||1; const v=o.alt&&voiceB?voiceB:zhVoice; if(v)u.voice=v; u.onend=u.onerror=()=>res(); speechSynthesis.speak(u) }) }
-async function playItem(q){ speechSynthesis.cancel(); for(let i=0;i<q.say.length;i++){ const s=q.say[i]; await say(s.t,{rate:q.t==='word'||q.t==='num'?.7:.8,pitch:s.alt?1.3:1,alt:s.alt}); if(i<q.say.length-1) await new Promise(r=>setTimeout(r,450)) } }
+const canSpeak=()=>('speechSynthesis' in window)&&typeof SpeechSynthesisUtterance!=='undefined';
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function say(text,o={}){ return new Promise(res=>{ const u=new SpeechSynthesisUtterance(text); u.lang='zh-CN'; u.rate=o.rate||.8; u.pitch=o.pitch||1; const v=o.alt&&voiceB?voiceB:zhVoice; if(v)u.voice=v;
+  let started=false,done=false,t1,t2; const fin=()=>{ if(done)return; done=true; clearTimeout(t1); clearTimeout(t2); res(started) };
+  u.onstart=()=>{started=true}; u.onend=()=>{started=true;fin()}; u.onerror=()=>fin();
+  t1=setTimeout(()=>{ if(!started)fin() },3500); t2=setTimeout(fin,25000);
+  try{speechSynthesis.resume()}catch(e){} speechSynthesis.speak(u) }) }
+async function playItem(q){ speechSynthesis.cancel(); await sleep(120); let any=false; for(let i=0;i<q.say.length;i++){ const s=q.say[i]; const ok=await say(s.t,{rate:q.t==='word'||q.t==='num'?.7:.8,pitch:s.alt?1.3:1,alt:s.alt}); any=any||ok; if(!ok&&i===0)break; if(i<q.say.length-1) await sleep(450) } return any }
+function noAudio(box){ if(box.querySelector('.noaud'))return; box.append(h('div',{class:'warn noaud'},'Suara belum keluar di perangkat ini. Cek volume HP dan pastikan suara Mandarin (Google Text-to-speech) terpasang. Kamu juga bisa lanjut dengan ',h('b',{},'Mode teks'),'.',h('div',{style:'margin-top:8px'},h('button',{class:'btn navy',onclick:()=>{S.textMode=true;quiz()}},'Pakai Mode teks')))) }
 const stopSpeech=()=>{try{speechSynthesis.cancel()}catch(e){}};
 
 // ---------- layar ----------
@@ -234,7 +240,7 @@ function homeScreen(){ stopSpeech();
       h('span',{class:'ic'},open?L.ic:'🔒'),h('span',{},h('b',{},`Level ${L.id}: ${L.name}`),h('small',{},open?`${L.desc} · ${L.n} soal`:'Selesaikan level sebelumnya dulu')),
       h('span',{class:'stars','aria-label':b?b.stars+' bintang':''},b?'★'.repeat(b.stars)+'☆'.repeat(3-b.stars):''))) }
   const vmsg=h('p',{class:'warn',hidden:true,role:'status'});
-  root.append(h('div',{class:'card'},h('b',{},'Cek suara untuk Level 6'),h('p',{class:'lead'},'Ujian mendengarkan memakai suara Mandarin dari perangkatmu.'),h('button',{class:'btn navy',onclick:async()=>{ if(!canSpeak()){vmsg.textContent='Perangkat ini belum punya suara Mandarin. Di Level 6 kamu bisa memakai Mode teks.';vmsg.hidden=false;return} vmsg.hidden=true; await say('你好，欢迎学习汉语。') }},'🔊 Tes suara'),vmsg));
+  root.append(h('div',{class:'card'},h('b',{},'Cek suara untuk Level 6'),h('p',{class:'lead'},'Ujian mendengarkan memakai suara Mandarin dari perangkatmu.'),h('button',{class:'btn navy',onclick:async()=>{ if(!canSpeak()){vmsg.textContent='Perangkat ini belum punya suara Mandarin. Di Level 6 kamu bisa memakai Mode teks.';vmsg.hidden=false;return} vmsg.hidden=true; const ok=await say('你好，欢迎学习汉语。'); if(!ok){vmsg.textContent='Suara belum keluar. Cek volume HP dan pasang suara Mandarin (Google Text-to-speech). Di Level 6 kamu bisa memakai Mode teks.';vmsg.hidden=false} }},'🔊 Tes suara'),vmsg));
   mount(root) }
 function mount(n){ $('screen').replaceChildren(n); window.scrollTo({top:0}) }
 function startGame(L){ stopSpeech(); S.textMode=false; S.sess={mode:'game',level:L,title:`Level ${L} · ${LEVELS[L-1].name}`,qs:buildLevel(L),i:0,correct:0,streak:0,pts:0,wrong:[]}; quiz() }
@@ -283,7 +289,7 @@ function listenPlayer(q,s){
   if(!canSpeak()&&!S.textMode){ wrap.append(h('div',{class:'warn'},'Perangkat ini belum punya suara Mandarin, jadi audio tidak bisa diputar. Kamu bisa lanjut dengan ',h('b',{},'Mode teks'),' (teks ditampilkan sebagai pengganti audio).'),h('button',{class:'btn navy',onclick:()=>{S.textMode=true;quiz()}},'Pakai Mode teks')); return wrap }
   if(S.textMode){ wrap.append(h('div',{class:'big t'},q.say.map(x=>x.t).join(' ')),h('div',{class:'idn'},'Mode teks: ini pengganti audio.')); return wrap }
   let left=2; const info=h('div',{class:'py'},'Kamu bisa memutar maksimal 2 kali.');
-  const play=h('button',{class:'play',id:'play','aria-label':'Putar audio',onclick:async()=>{ if(left<=0)return; left--; play.disabled=true; play.classList.add('on'); try{await playItem(q)}finally{play.classList.remove('on'); play.disabled=left<=0; info.textContent=left>0?`Sisa putar: ${left}x`:'Putaran habis.'} }},'▶');
+  const play=h('button',{class:'play',id:'play','aria-label':'Putar audio',onclick:async()=>{ if(left<=0)return; left--; play.disabled=true; play.classList.add('on'); let ok=false; try{ok=await playItem(q)}finally{play.classList.remove('on'); if(!ok){left++; noAudio(wrap)} play.disabled=left<=0; info.textContent=left>0?`Sisa putar: ${left}x`:'Putaran habis.'} }},'▶');
   wrap.append(h('div',{class:'player'},play),info); if(q.t==='dlg')wrap.append(h('div',{class:'idn'},'Dialog: dua orang berbicara bergantian (A lalu B).')); return wrap }
 function renderOrder(card,fb,next,q,s){
   const x=q.x; const tiles=shuffle(x.words.map((w,i)=>({w,i}))); let chosen=[];
