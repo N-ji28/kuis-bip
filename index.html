@@ -81,6 +81,7 @@ button:focus-visible{outline:3px solid #f3a0ab;outline-offset:2px}
 .score{font-size:3rem;font-weight:800;color:var(--cherry);line-height:1.1}
 .big-stars{font-size:2.2rem;color:#e0a100;letter-spacing:6px}
 .rev{text-align:left;border-top:1px solid var(--line);padding:8px 0;font-size:.95rem}
+.tierchip{display:inline-block;font-size:.75rem;font-weight:700;border-radius:999px;padding:2px 10px;margin-bottom:6px}.tierchip.t1{background:#e3f3ea;color:#14502f}.tierchip.t2{background:#fff6e0;color:#7a5200}.tierchip.t3{background:#fdeceb;color:#7a1a14}
 .rev .a{color:var(--bad)}.rev .c{color:var(--ok)}
 .foot{color:var(--muted);font-size:.8rem;text-align:center;margin-top:18px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -105,8 +106,8 @@ const S={useClips:false,xp:saved.xp||0,best:saved.best||{},quiz:saved.quiz||{},u
 const persist=()=>store.set({xp:S.xp,best:S.best,quiz:S.quiz});
 const PASS=0.7;
 const LEVELS=[
- {id:1,name:'Kosakata',ic:'字',desc:'Arti kata ↔ hanzi dari semua BAB',n:15},
- {id:2,name:'Pinyin & Hanzi',ic:'拼',desc:'Pilih pinyin bernada yang benar',n:15},
+ {id:1,name:'Kosakata',ic:'字',desc:'Pinyin, hanzi, dan arti kata dari semua BAB',n:15},
+ {id:2,name:'Pinyin & Nada',ic:'拼',desc:'Pilih pinyin, nada, dan hanzi yang tepat',n:15},
  {id:3,name:'Pola Kalimat',ic:'句',desc:'Lengkapi dan susun kalimat',n:15},
  {id:4,name:'Dialog & Cerita',ic:'话',desc:'Baca dialog, jawab pertanyaan',n:15},
  {id:5,name:'Angka & Belanja',ic:'数',desc:'Baca angka besar, 零, 两, desimal 点',n:15},
@@ -132,24 +133,44 @@ function pickN(filtered,full,n){ // utamakan BAB terpilih, tambah dari semua bil
   let out=sample(filtered,n); if(out.length<n){ const rest=full.filter(x=>!out.includes(x)); out=out.concat(sample(rest,n-out.length)) } return out }
 
 // ---------- pembuat soal ----------
-function distract(v,mode){
-  const same=ALLV.filter(x=>x.bab===v.bab&&x.h!==v.h), other=ALLV.filter(x=>x.bab!==v.bab&&x.h!==v.h);
+const TONES={a:'āáǎà',e:'ēéěè',i:'īíǐì',o:'ōóǒò',u:'ūúǔù',ü:'ǖǘǚǜ'};
+function toneVariants(p){ const out=[]; [...p].forEach((ch,pos)=>{ for(const [base,set] of Object.entries(TONES)){ const ti=set.indexOf(ch); if(ti<0)continue;
+    for(let k=0;k<4;k++){ if(k===ti)continue; const s=[...p]; s[pos]=set[k]; const r=s.join(''); if(r!==p&&!out.includes(r)) out.push(r) } } });
+  return out }
+function distract(v,mode,tier){
+  const rest=ALLV.filter(x=>x.h!==v.h), same=rest.filter(x=>x.bab===v.bab), other=rest.filter(x=>x.bab!==v.bab);
   const key=stripTone(v.p), k1=stripTone(v.p.split(' ')[0]);
   const score=x=>(stripTone(x.p)===key?3:stripTone(x.p.split(' ')[0])===k1?2:Math.abs([...x.h].length-[...v.h].length)<=1?1:0);
-  const cand=shuffle(same).sort((a,b)=>score(b)-score(a)).concat(shuffle(other).sort((a,b)=>score(b)-score(a)));
+  let cand;
+  if(tier===1) cand=shuffle(rest).sort((a,b)=>(a.bab===v.bab?1:0)-(b.bab===v.bab?1:0)||Math.random()-.5); // mudah: pengecoh yang jelas berbeda
+  else if(tier===3) cand=shuffle(rest).sort((a,b)=>score(b)-score(a)||(b.bab===v.bab)-(a.bab===v.bab)); // sulit: pengecoh paling mirip
+  else cand=shuffle(same).sort((a,b)=>score(b)-score(a)).concat(shuffle(other).sort((a,b)=>score(b)-score(a)));
   const out=[];
   for(const x of cand){ if(out.length>=3)break;
-    if(mode==='h2i'&&(x.i===v.i||out.some(o=>o.i===x.i)))continue;
-    if(mode==='h2p'&&(x.p===v.p||out.some(o=>o.p===x.p)))continue;
+    if((mode==='p2i'||mode==='h2i')&&(x.i===v.i||out.some(o=>o.i===x.i)))continue;
+    if(mode==='i2p'&&(x.p===v.p||out.some(o=>o.p===x.p)))continue;
     if(mode==='i2h'&&(x.h===v.h||out.some(o=>o.h===x.h)))continue;
     out.push(x) }
   return out }
-function vq(v,mode){
-  const w=distract(v,mode), opts=shuffle([v,...w]), ans=opts.indexOf(v), tag='BAB '+v.bab;
-  if(mode==='h2i') return {kind:'mc',bab:v.bab,lab:'Apa arti kata ini?',big:v.h,py:v.p,opts:opts.map(o=>({m:o.i})),ans,ex:v};
-  if(mode==='h2p') return {kind:'mc',bab:v.bab,lab:'Pilih pinyin yang benar untuk kata ini:',big:v.h,opts:opts.map(o=>({m:o.p})),ans,ex:v};
-  return {kind:'mc',bab:v.bab,lab:'Pilih hanzi untuk arti ini:',big:v.i,bigT:true,opts:opts.map(o=>({m:o.h,s:o.p})),ans,ex:v};
+function vq(v,mode,tier=2){
+  const tag={tier};
+  if(mode==='tone'){ const vars=toneVariants(v.p); if(vars.length<3) return vq(v,'i2p',tier);
+    const w=shuffle(vars).slice(0,3), opts=shuffle([v.p,...w]);
+    return {kind:'mc',bab:v.bab,tier,lab:'Pilih pinyin dengan nada yang benar untuk kata ini:',big:v.h,py:null,idn:'Arti: '+v.i,opts:opts.map(o=>({m:o})),ans:opts.indexOf(v.p),ex:v} }
+  const w=distract(v,mode,tier), opts=shuffle([v,...w]), ans=opts.indexOf(v);
+  if(mode==='h2i') return {kind:'mc',bab:v.bab,tier,lab:'Apa arti kata ini?',big:v.h,py:v.p,opts:opts.map(o=>({m:o.i})),ans,ex:v};
+  if(mode==='p2i') return {kind:'mc',bab:v.bab,tier,lab:'Apa arti dari pinyin ini?',big:v.p,bigT:true,opts:opts.map(o=>({m:o.i})),ans,ex:v};
+  if(mode==='i2p') return {kind:'mc',bab:v.bab,tier,lab:'Pilih pinyin untuk arti ini:',big:v.i,bigT:true,opts:opts.map(o=>({m:o.p})),ans,ex:v};
+  return {kind:'mc',bab:v.bab,tier,lab:'Pilih hanzi untuk arti ini:',big:v.i,bigT:true,opts:opts.map(o=>({m:o.h,s:o.p})),ans,ex:v};
 }
+const MODES={1:['p2i','h2i'],2:['i2p','i2h'],3:['tone','tone','p2i','i2p']};
+function modeFor(tier){ const m=MODES[tier]; return m[Math.floor(Math.random()*m.length)] }
+function zigzag(w){ // w=[mudah,sedang,sulit] -> urutan tingkat yang naik-turun
+  let a=[]; w.forEach((c,i)=>{for(let k=0;k<c;k++)a.push(i+1)});
+  for(let tries=0;tries<200;tries++){ a=shuffle(a); let ok=true; for(let i=2;i<a.length;i++) if(a[i]===a[i-1]&&a[i]===a[i-2]) ok=false;
+    let mono=true; for(let i=1;i<a.length;i++) if(a[i]<a[i-1]) mono=false; if(ok&&!mono&&a[0]!==3) return a }
+  return a }
+function vqSeq(vs,w){ const tr=zigzag(w); return vs.map((v,i)=>vq(v,modeFor(tr[i]),tr[i])) }
 function fillQ(f){ const o=shuffle(f.opts.map((x,i)=>({x,i}))); return {kind:'fill',bab:f.bab,x:f,opts:o.map(z=>({m:z.x.h,s:z.x.p})),ans:o.findIndex(z=>z.i===0)} }
 function orderQ(o){ return {kind:'order',bab:o.bab,x:o} }
 function dlgQ({d,q,i}){ const o=shuffle(q.opts.map((x,j)=>({x,j}))); return {kind:'mc',bab:d.bab,story:d,lab:q.q,opts:o.map(z=>({m:z.x.h,s:z.x.p})),ans:o.findIndex(z=>z.j===0),fixedLab:true} }
@@ -184,22 +205,22 @@ function pick1(arr){ const fresh=arr.filter(x=>!used.has(x)); const x=(fresh.len
 // ---------- level game & mini kuis ----------
 function buildLevel(L){
   used=new Set(); const sel=x=>inSel(x);
-  if(L===1){ const v=pickN(ALLV.filter(sel),ALLV,15); return v.map((x,i)=>vq(x,i<10?'h2i':'i2h')) }
-  if(L===2){ const pool=ALLV.filter(x=>[...x.h].length>=2); const v=pickN(pool.filter(sel),pool,15); return v.map((x,i)=>vq(x,i<8?'h2p':'i2h')) }
+  if(L===1){ const v=pickN(ALLV.filter(sel),ALLV,15); return vqSeq(v,[8,5,2]) }
+  if(L===2){ const v=pickN(ALLV.filter(sel),ALLV,15); return vqSeq(v,[3,6,6]) }
   if(L===3){ const f=pickN(ALLFILL.filter(sel),ALLFILL,10).map(fillQ), o=pickN(ALLORD.filter(sel),ALLORD,5).map(orderQ); return shuffle([...f,...o]) }
   if(L===4){ const all=dlgQs(ALLDLG), fl=all.filter(x=>S.babs.has(x.d.bab)); return pickN(fl,all,15).map(dlgQ) }
   if(L===5){ const n1=sample(D.nums,5).map(n=>numQ(n,'n2h')), n2=sample(D.nums,4).map(n=>numQ(n,'h2n')), ex=sample(EXTRA,4).map(x=>extraQ(x.e,x.bab));
     const fb=sample(ALLFILL.filter(x=>x.bab>=18),2).map(fillQ); return shuffle([...n1,...n2,...ex,...fb]) }
   if(L===6){ const pool={v:ALLV.filter(sel).length>=6?ALLV.filter(sel):ALLV,f:ALLFILL.filter(sel).length>=4?ALLFILL.filter(sel):ALLFILL,dq:dlgQs(ALLDLG).filter(x=>S.babs.has(x.d.bab)).length>=2?dlgQs(ALLDLG).filter(x=>S.babs.has(x.d.bab)):dlgQs(ALLDLG)};
-    return [...Array(4)].map(()=>lq('word',pool)).concat([...Array(3)].map(()=>lq('num',pool)),[...Array(4)].map(()=>lq('sent',pool)),[...Array(4)].map(()=>lq('dlg',pool))) }
+    return shuffle([...Array(4)].map(()=>lq('word',pool)).concat([...Array(3)].map(()=>lq('num',pool)),[...Array(4)].map(()=>lq('sent',pool)),[...Array(4)].map(()=>lq('dlg',pool)))) }
 }
 function miniQuiz(bid){ used=new Set(); const b=babOf(bid); const qs=[]; const bv=b.vocab.map(v=>({...v,bab:bid}));
   const take=(arr,n)=>sample(arr,Math.min(n,arr.length));
-  if(bid===18){ qs.push(...take(D.nums,2).map(n=>numQ(n,'n2h')),...take(D.nums,2).map(n=>numQ(n,'h2n')),...take(EXTRA,2).map(x=>extraQ(x.e,x.bab))); take(bv,2).forEach((v,i)=>qs.push(vq(v,i?'h2p':'h2i'))); }
-  else { take(bv,4).forEach((v,i)=>qs.push(vq(v,['h2i','i2h','h2p','i2h'][i]))); qs.push(...take(ALLFILL.filter(x=>x.bab===bid),3).map(fillQ)); qs.push(...take(ALLORD.filter(x=>x.bab===bid),1).map(orderQ)); qs.push(...take(dlgQs(ALLDLG.filter(x=>x.bab===bid)),2).map(dlgQ)); }
+  if(bid===18){ qs.push(...take(D.nums,2).map(n=>numQ(n,'n2h')),...take(D.nums,2).map(n=>numQ(n,'h2n')),...take(EXTRA,2).map(x=>extraQ(x.e,x.bab))); take(bv,2).forEach((v,i)=>qs.push(vq(v,i?'tone':'p2i',i?3:1))); }
+  else { {const tr=zigzag([1,2,1]); take(bv,4).forEach((v,i)=>{const tt=[1,3,2,1][i]; qs.push(vq(v,modeFor(tt),tt))});} qs.push(...take(ALLFILL.filter(x=>x.bab===bid),3).map(fillQ)); qs.push(...take(ALLORD.filter(x=>x.bab===bid),1).map(orderQ)); qs.push(...take(dlgQs(ALLDLG.filter(x=>x.bab===bid)),2).map(dlgQ)); }
   const fl=ALLFILL.filter(x=>x.bab===bid), od=ALLORD.filter(x=>x.bab===bid);
   let g=0; while(qs.length<10&&g++<50){ const r=Math.random(); const pool=r<.5?bv:(r<.8&&fl.length?fl:od); if(!pool.length)continue; const x=pool[Math.floor(Math.random()*pool.length)];
-    if(pool===bv){ if(!qs.some(q=>q.ex&&q.ex.h===x.h)) qs.push(vq(x,['h2i','i2h','h2p'][Math.floor(Math.random()*3)])) } else if(pool===fl){ if(!qs.some(q=>q.x===x)) qs.push(fillQ(x)) } else { if(!qs.some(q=>q.x===x)) qs.push(orderQ(x)) } }
+    if(pool===bv){ if(!qs.some(q=>q.ex&&q.ex.h===x.h)) {const tt=1+Math.floor(Math.random()*3); qs.push(vq(x,modeFor(tt),tt))} } else if(pool===fl){ if(!qs.some(q=>q.x===x)) qs.push(fillQ(x)) } else { if(!qs.some(q=>q.x===x)) qs.push(orderQ(x)) } }
   return shuffle(qs).slice(0,10) }
 
 // ---------- suara ----------
@@ -280,7 +301,7 @@ function feedback(fb,ok,lines){ fb.replaceChildren(h('div',{class:'fb '+(ok?'ok'
 function renderMC(card,fb,next,q,s){
   if(q.story) card.append(storyBox(q.story));
   let pr;
-  if(q.kind==='mc'){ pr=h('div',{class:'prompt'},h('div',{class:'lab'},q.lab)); if(q.big!=null)pr.append(h('div',{class:'big'+(q.bigT?' t':'')},q.big)); if(q.py&&S.showPinyin)pr.append(h('div',{class:'py'},q.py)); }
+  if(q.kind==='mc'){ pr=h('div',{class:'prompt'},h('div',{class:'lab'},q.lab)); if(q.big!=null)pr.append(h('div',{class:'big'+(q.bigT?' t':'')},q.big)); if(q.py&&S.showPinyin)pr.append(h('div',{class:'py'},q.py)); if(q.idn)pr.append(h('div',{class:'idn'},q.idn)); if(q.tier)pr.prepend(h('span',{class:'tierchip t'+q.tier},['','Mudah','Sedang','Sulit'][q.tier])); }
   else if(q.kind==='fill'){ pr=h('div',{class:'prompt'},h('div',{class:'lab'},'Lengkapi kalimat:'),h('div',{class:'big t'},q.x.s)); if(S.showPinyin&&q.x.sp)pr.append(h('div',{class:'py'},q.x.sp)); pr.append(h('div',{class:'idn'},q.x.idn)); }
   else pr=listenPlayer(q,s);
   card.append(pr);
